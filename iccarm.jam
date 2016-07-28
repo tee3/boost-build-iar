@@ -1,0 +1,378 @@
+# Boost.Build support for the IAR C/C++ Compiler for ARM.
+
+# @todo deal with shared libraries (relocatable?)
+# @todo deal with multi-threaded (none at compiler level)
+# @todo deal with windows and linux host-os
+# @todo this is a specific instance of a general problem of cross-compiling.
+# @todo only works for architecture arm
+# IAR flags for different architectures.
+
+import property ;
+import generators ;
+import os ;
+import type ;
+import toolset ;
+import errors ;
+import feature ;
+import path ;
+import common ;
+import errors ;
+
+#instruction-sets =
+#  ARMv1
+#  ARMv2
+#  ARMv3
+#  ARMv4
+#  ARMv4T
+#  ARMv5TE
+#  ARMv6
+#  ARMv6-M
+#  ARMv7-M
+#  ARMv7E-M
+#  ARMv7-R
+#  ARMv7-A
+#  ARMv8-A
+#  ARMv8.1-A
+#  ARMv8.2-A
+#  ARMv8-R
+#  ARMv8-M
+#  ;
+
+cpus =
+  8-M.baseline
+  8-M.mainline
+  ARM1020E
+  ARM1022E
+  ARM1026EJ-S
+  ARM10E
+  ARM1136J
+  ARM1136J-S
+  ARM1136JF
+  ARM1136JF-S
+  ARM1176J
+  ARM1176J-S
+  ARM1176JF
+  ARM1176JF-S
+  ARM1176JZ
+  ARM1176JZ-S
+  ARM1176JZF
+  ARM1176JZF-S
+  ARM710T
+  ARM720T
+  ARM740T
+  ARM7EJ-S
+  ARM7TDMI
+  ARM7TDMI
+  ARM7TDMI-S
+  ARM920T
+  ARM922T
+  ARM926EJ-S
+  ARM940T
+  ARM946E-S
+  ARM966E-S
+  ARM968E-S
+  ARM9E
+  ARM9E-S
+  ARM9TDMI
+  Cortex-A15
+  Cortex-A17
+  Cortex-A5
+  Cortex-A5F
+  Cortex-A7
+  Cortex-A8
+  Cortex-A9
+  Cortex-M0
+  Cortex-M0+
+  Cortex-M1
+  Cortex-M3
+  Cortex-M4
+  Cortex-M4F
+  Cortex-M7
+  Cortex-Ms1
+  Cortex-R4
+  Cortex-R4F
+  Cortex-R5
+  Cortex-R5F
+  Cortex-R7
+  Cortex-R7F
+  XScale
+  XScale-IR7
+  ;
+
+fpus =
+  VFPv2
+  VFPv3
+  VFPv3_d16
+  VFPv4
+  VFPv4_sp
+  VFPv4_d16
+  VFPv5_sp
+  VFPv5_d16
+  VFP9-S
+  none
+  ;
+
+if [ MATCH (--debug-configuration) : [ modules.peek : ARGV ] ]
+{
+  .debug-configuration = true ;
+}
+
+feature.extend toolset : iccarm ;
+
+feature.extend architecture : arm ;
+#feature.extend instruction-set : $(instruction-sets) ;
+feature.extend instruction-set : $(cpus) ;
+# @todo add a feature for the floating-point-unit
+#feature.extend floating-point-unit : $(fpus) ;
+
+# @todo add a feature for the byte ordering
+#feature.extend byte-ordering : big-endian little-endian ;
+
+type.set-generated-target-suffix EXE : <toolset>iccarm : out ;
+type.set-generated-target-suffix OBJ : <toolset>iccarm : o ;
+type.set-generated-target-suffix STATIC_LIB : <toolset>iccarm : a ;
+type.set-generated-target-prefix IMPORT_LIB : <toolset>iccarm : "" ;
+type.set-generated-target-suffix IMPORT_LIB : <toolset>iccarm : a ;
+
+generators.register-linker iccarm.link : OBJ STATIC_LIB IMPORT_LIB : EXE : <toolset>iccarm ;
+generators.register-archiver iccarm.archive : OBJ : STATIC_LIB : <toolset>iccarm ;
+generators.register-c-compiler iccarm.compile.c++ : CPP : OBJ : <toolset>iccarm ;
+generators.register-c-compiler iccarm.compile.c : C : OBJ : <toolset>iccarm ;
+generators.register-standard iccarm.asm : ASM : OBJ : <toolset>iccarm ;
+
+rule init ( version ? : command * : options * )
+{
+  # Check that the host operating system is supported.  If it is not,
+  # continue without configuring so we can still build targets that do
+  # not need this toolset.
+  if [ os.name ] = NT
+  {
+    local possible-paths = ;
+
+    if ! $(command)
+    {
+      local program-files-roots = "C:/Program Files" "C:/Program Files (x86)" ;
+      local possible-roots = [ GLOB $(program-files-roots)/"IAR Systems" : "Embedded Workbench *" : true ] ;
+
+      possible-paths = $(possible-roots)/ARM/bin ;
+    }
+
+    command = [ common.get-invocation-command iccarm : iccarm : $(command) : $(possible-paths) ] ;
+
+    if $(command)
+    {
+      local output = [ SHELL "\"$(command)\" --version" ] ;
+
+      local detected-version-string = [ MATCH "IAR .* V(.*)\\/W32 for ARM" : $(output) ] ;
+      local detected-version-components = [ MATCH "([0-9]+\\.[0-9]+\\.[0-9]+)\\.[0-9]+" : $(detected-version-string) ] ;
+      local detected-version = $(detected-version-components) ;
+
+      if ! $(detected-version)
+      {
+        errors.user-error "iccarm: no version detected" ;
+      }
+
+      if $(version)
+      {
+        if $(detected-version) != $(version)
+        {
+          errors.user-error "iccarm: detected version (" $(detected-version) ") does not match desired (" $(version) ")" ;
+        }
+      }
+
+      if $(detected-version)
+      {
+        version = $(detected-version) ;
+      }
+    }
+    else
+    {
+      errors.user-error "iccarm: iccarm not found at" $(command) ;
+    }
+
+    if $(.debug-configuration)
+    {
+       ECHO "iccarm: supported architectures: " $(architectures) ;
+       ECHO "iccarm: supported instruction sets: " $(instruction-sets) ;
+       ECHO "iccarm: supported cpus: " $(cpus) ;
+       ECHO "iccarm: supported floating-point units: " $(fpus) ;
+       ECHO "iccarm: supported byte-ordering: big-endian little-endian" ;
+    }
+
+    root = [ common.get-absolute-tool-path $(command[-1]) ] ;
+    root = $(root:P) ;
+
+    local condition = [ common.check-init-parameters iccarm : version $(version) ] ;
+
+    common.handle-options iccarm : $(condition) : $(command) : $(options) ;
+
+    #toolset.add-requirements <toolset>iccarm:<testing.launcher>"$(root[0])/bin/load6x.exe" ;
+    toolset.add-requirements <toolset>iccarm:<testing.launcher>echo ;
+
+    if $(.debug-configuration)
+    {
+      ECHO "iccarm: using compiler" $(version) "at" $(root) ;
+    }
+
+    # Declare flags
+
+    toolset.flags iccarm.link OPTIONS $(condition)/<strip>off : ;
+    toolset.flags iccarm.link OPTIONS $(condition)/<strip>on : --strip ;
+
+    toolset.flags iccarm.compile OPTIONS $(condition)/<debug-symbols>off : ;
+    toolset.flags iccarm.compile OPTIONS $(condition)/<debug-symbols>on : -r ;
+
+    toolset.flags iccarm.asm OPTIONS $(condition)/<debug-symbols>on : -r ;
+
+    toolset.flags iccarm.compile OPTIONS $(condition)/<optimization>off : -On ;
+    toolset.flags iccarm.compile OPTIONS $(condition)/<optimization>speed : -Ohs ;
+    toolset.flags iccarm.compile OPTIONS $(condition)/<optimization>space : -Ohz ;
+
+    # @todo fill in completely
+    # toolset.flags iccarm.compile OPTIONS $(condition)/<profiling>off : ;
+    # toolset.flags iccarm.compile OPTIONS $(condition)/<profiling>on : ;
+
+    toolset.flags iccarm.compile OPTIONS $(condition)/<inlining>off : --no_inline ;
+    toolset.flags iccarm.compile OPTIONS $(condition)/<inlining>on : ;
+    toolset.flags iccarm.compile OPTIONS $(condition)/<inlining>full : ;
+
+    toolset.flags iccarm.compile.c++ OPTIONS $(condition)/<rtti>off : --no_rtti ;
+    toolset.flags iccarm.compile.c++ OPTIONS $(condition)/<rtti>on : ;
+
+#    toolset.flags iccarm.compile.c++ OPTIONS $(condition)/<exceptions>off : --no_exceptions ;
+#    toolset.flags iccarm.compile.c++ OPTIONS $(condition)/<exceptions>on : ;
+
+    toolset.flags iccarm.compile.c++ OPTIONS $(condition)/<exception-handling>off : ;
+    toolset.flags iccarm.compile.c++ OPTIONS $(condition)/<exception-handling>on : ;
+
+    toolset.flags iccarm.compile OPTIONS $(condition)/<warnings>off : --no_warnings ;
+    toolset.flags iccarm.compile OPTIONS $(condition)/<warnings>all : ;
+
+    toolset.flags iccarm.compile OPTIONS $(condition)/<warnings-as-errors>off : ;
+    toolset.flags iccarm.compile OPTIONS $(condition)/<warnings-as-errors>on : --warnings-are-errors ;
+
+    toolset.flags iccarm.link OPTIONS $(condition) : <linkflags> ;
+    toolset.flags iccarm.archive OPTIONS $(condition) : <archiveflags> ;
+    toolset.flags iccarm.compile OPTIONS $(condition) : <compileflags> ;
+
+    toolset.flags iccarm.compile.c OPTIONS $(condition) : <cflags> ;
+    toolset.flags iccarm.compile.c++ OPTIONS $(condition) : <cxxflags> ;
+    toolset.flags iccarm.compile.asm OPTIONS $(condition) : <asmflags> ;
+    toolset.flags iccarm.compile STDHDRS $(condition) : $(root)/inc ;
+    toolset.flags iccarm.compile DEFINES $(condition) : <define> ;
+    toolset.flags iccarm.compile UNDEFINES $(condition) : <undef> ;
+    toolset.flags iccarm.compile INCLUDES $(condition) : <include> ;
+
+    toolset.flags iccarm.compile DEFINE_OPTION $(condition) : -D : unchecked ;
+#    toolset.flags iccarm.compile UNDEFINE_OPTION $(condition) : -U : unchecked ;
+    toolset.flags iccarm.compile INCLUDE_PATH_OPTION $(condition) : -I : unchecked ;
+    toolset.flags iccarm.compile SYSTEM_INCLUDE_PATH_OPTION $(condition) : --system_include_dir : unchecked ;
+
+    # @todo add standard library based on cpu and endianess settings
+    # @todo endianess left at default for now.
+    toolset.flags iccarm.link DEFAULTS $(condition) : --silent ;
+    toolset.flags iccarm.compile DEFAULTS $(condition) : --silent ;
+    toolset.flags iccarm.compile.c DEFAULTS $(condition) : ;
+    toolset.flags iccarm.compile.c++ DEFAULTS $(condition) : --eec++ -Dstd= ; # note to get around no std namespace
+    toolset.flags iccarm.asm DEFAULTS $(condition) : -S ;
+
+    toolset.flags iccarm.link DEFINES $(condition) : <define> ;
+    toolset.flags iccarm.link UNDEFINES $(condition) : <undef> ;
+    toolset.flags iccarm.link DEFINE_OPTION $(condition) : --config_def= : unchecked ;
+#    toolset.flags iccarm.link UNDEFINE_OPTION $(condition) : --config_undef= : unchecked ;
+    toolset.flags iccarm.link LIBRARY_PATH <library-path> ;
+    toolset.flags iccarm.link FINDLIBS_ST <find-static-library> ;
+    toolset.flags iccarm.link FINDLIBS_SA <find-shared-library> ;
+    toolset.flags iccarm.link LIBRARIES <library-file> ;
+    toolset.flags iccarm.link LIBRARY_PATH_OPTION  : -L : unchecked ;
+    toolset.flags iccarm.link LIBRARY_OPTION  : -l : unchecked ;
+    toolset.flags iccarm.link STDLIBPATH $(condition) : $(root)/lib ;
+    toolset.flags iccarm.link RUN_PATH $(condition) : $(root)/bin ;
+    toolset.flags iccarm .root $(condition) : $(root)/bin/ ;
+
+    toolset.flags iccarm.hex OPTIONS $(condition) : <flags> ;
+    toolset.flags iccarm.hex HEX_OUTPUT_OPTION $(condition) : -o ;
+
+#    toolset.flags iccarm.compile OPTIONS $(condition)/<byte-ordering>default : ;
+#    toolset.flags iccarm.compile OPTIONS $(condition)/<byte-ordering>big-endian : --endian big ;
+#    toolset.flags iccarm.compile OPTIONS $(condition)/<byte-ordering>little-endian : --endian little ;
+
+    for cpu in $(cpus)
+    {
+      #cpu-flags iccarm.link STDLIBRARIES : $(condition) : arm : armv7 : rts6200.lib    : default ;
+      #cpu-flags iccarm.link STDLIBRARIES : $(condition) : arm : armv7 : rts6200_eh.lib : default ;
+
+      cpu-flags iccarm.link OPTIONS : $(condition) : arm : $(cpu) : --cpu $(cpu) ;
+      cpu-flags iccarm.compile OPTIONS : $(condition) : arm : $(cpu) : --cpu $(cpu) ;
+      cpu-flags iccarm.asm OPTIONS : $(condition) : arm : $(cpu) : --cpu $(cpu) ;
+    }
+
+#    for fpu in $(fpus)
+#    {
+#      toolset.flags iccarm.compile OPTIONS $(condition)/<fpu>$(fpu) : --fpu $(fpu) ;
+#    }
+  }
+  else
+  {
+    ECHO "iccarm: warning: unsupported operating system" os.name ;
+  }
+}
+
+# @todo put all these options in a variable or a response file.
+# @todo library configuration needs to be configurable
+actions compile.c
+{
+    "$(CONFIG_COMMAND)" $(DEFAULTS) --dlib_config "Dlib_Config_Full.h" $(OPTIONS) $(DEFINE_OPTION)"$(DEFINES)" $(SYSTEM_INCLUDE_PATH_OPTION)"$(STDHDRS)" $(INCLUDE_PATH_OPTION)"$(INCLUDES)" -o "$(<:W)" "$(>:W)"
+}
+
+actions compile.c++
+{
+    "$(CONFIG_COMMAND)" $(DEFAULTS) --dlib_config "Dlib_Config_Full.h" $(OPTIONS) $(DEFINE_OPTION)"$(DEFINES)" $(INCLUDE_PATH_OPTION)"$(STDHDRS)" $(INCLUDE_PATH_OPTION)"$(INCLUDES)" -o "$(<:W)" "$(>:W)"
+}
+
+actions compile.asm
+{
+    "$(.root)iasmarm" $(DEFAULTS) $(OPTIONS) $(DEFINE_OPTION)"$(DEFINES)" $(INCLUDE_PATH_OPTION)"$(INCLUDES)" $(INCLUDE_PATH_OPTION)"$(STDHDRS)" -o "$(<:W)" "$(>:W)"
+}
+
+actions link
+{
+    "$(.root)ilinkarm" $(DEFAULTS) $(OPTIONS) $(LIBRARY_PATH_OPTION)"$(LIBRARY_PATH:W)" $(LIBRARY_PATH_OPTION)"$(STDLIBPATH:W)" $(LIBRARY_OPTION)"$(LIBRARIES:W)" $(LIBRARY_OPTION)"$(STDLIBRARIES:W)" -o "$(<:W)" "$(>:W)"
+}
+
+actions together piecemeal archive
+{
+    "$(.root)iarchive" $(OPTIONS) -o "$(<:W)" "$(>:W)"
+}
+
+# @todo Hex should become a top-level target type
+actions hex
+{
+  "$(.bin)/ielftool" -q $(OPTIONS) $(HEX_OUTPUT_OPTION)"$(<)" -map "$(<:S=.hex.map)" "$(>)"
+}
+
+local rule cpu-flags ( toolset variable : condition ? : architecture : instruction-set + : values * : default ? )
+{
+  if $(condition)
+  {
+    if $(default)
+    {
+      # architecture and instruction-set are not set
+      toolset.flags $(toolset) $(variable) $(condition)/<architecture>/<instruction-set> : $(values) ;
+      # instruction-set is not set
+      toolset.flags $(toolset) $(variable) $(condition)/<architecture>$(architecture)/<instruction-set> : $(values) ;
+    }
+    toolset.flags $(toolset) $(variable) $(condition)/<architecture>/<instruction-set>$(instruction-set) $(condition)/<architecture>$(architecture)/<instruction-set>$(instruction-set) : $(values) ;
+  }
+  else
+  {
+    if $(default)
+    {
+      # architecture and instruction-set are not set
+      toolset.flags $(toolset) $(variable) <architecture>/<instruction-set> : $(values) ;
+      # instruction-set is not set
+      toolset.flags $(toolset) $(variable) <architecture>$(architecture)/<instruction-set> : $(values) ;
+    }
+    toolset.flags $(toolset) $(variable) <architecture>/<instruction-set>$(instruction-set) <architecture>$(architecture)/<instruction-set>$(instruction-set) : $(values) ;
+  }
+}
